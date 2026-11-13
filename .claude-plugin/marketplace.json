@@ -2,7 +2,7 @@
   "name": "memory-os",
   "description": "MEMORY OS: checked project memory and token-saving hooks for AI coding agents.",
   "owner": {
-    "name": "MEMORY OS contributors"
+    "name": "Alwin"
   },
   "plugins": [
     {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Project memory that is checked against your repo, plus a profiler that shows where your Claude Code tokens go.",
   "author": {
-    "name": "MEMORY OS contributors"
+    "name": "Alwin"
   },
   "license": "MIT",
   "mcpServers": {
@@ -14,5 +14,7 @@
         "mcp"
       ]
     }
-  }
+  },
+  "homepage": "https://github.com/josephalwin175-ai/memory-os",
+  "repository": "https://github.com/josephalwin175-ai/memory-os"
 }

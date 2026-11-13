@@ -134,10 +134,10 @@ mos export --format json --out memories.json
 
 ### Claude Code plugin
 
-Once this repository is on GitHub:
+In Claude Code:
 
 ```
-/plugin marketplace add <owner>/memory-os
+/plugin marketplace add josephalwin175-ai/memory-os
 /plugin install memory-os@memory-os
 ```
 
