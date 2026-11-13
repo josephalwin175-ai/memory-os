@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memory-os": {
+      "command": "python",
+      "args": [
+        "bin/mos.py",
+        "mcp"
+      ]
+    }
+  }
+}

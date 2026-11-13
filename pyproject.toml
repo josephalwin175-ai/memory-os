@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-os"
+version = "0.1.0"
+description = "Memory for AI agents that has to earn its place: checked against your repo, with a token usage profiler."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+mos = "memory_os.cli:main"
+
+[tool.setuptools]
+packages = ["memory_os"]
