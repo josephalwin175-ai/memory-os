@@ -10,7 +10,61 @@ It also ships a profiler that reads your Claude Code transcripts and shows where
 - No API key, no server, no background process spending tokens.
 - Memories are plain Markdown files in `.memory/`, so they diff and review like code.
 
-Status: early (v0.2). See [What is not built yet](#what-is-not-built-yet).
+Status: early (v0.2). See [What is not built yet](#what-is-not-built-yet) and [Known limits](#known-limits).
+
+## Quick start
+
+You need Python 3.10 or newer and Claude Code.
+
+**1. Install it** (once):
+
+```
+/plugin marketplace add josephalwin175-ai/memory-os
+/plugin install memory-os@memory-os
+```
+
+Also install the `mos` command, so you can run the commands below from a terminal:
+
+```bash
+pip install git+https://github.com/josephalwin175-ai/memory-os.git
+```
+
+**2. See where your tokens go** (works immediately, changes nothing):
+
+```bash
+mos meter
+```
+
+**3. Turn memory on for a project.** Memory is opt-in per project. In the project folder:
+
+```bash
+mos init
+```
+
+From then on, new Claude Code sessions in that project start with a short brief of what is saved. You do not need to do anything else.
+
+**4. Let memories build up.** Either ask Claude ("remember that we chose PostgreSQL because we need joins"), or save one yourself:
+
+```bash
+mos save "Database is PostgreSQL via pg. Chosen over MongoDB for joins." --type decision \
+  --check "json_has: package.json :: dependencies.pg"
+```
+
+The `--check` is the point: it is a claim about your repo that can be re-tested. If someone later removes `pg`, the memory is flagged stale instead of being believed.
+
+**5. Keep it honest.** From time to time:
+
+```bash
+mos verify --fix    # re-test every memory against the repo
+mos inbox           # review things MEMORY OS noticed, accept or reject each
+mos ledger          # which memories cost tokens and never get used
+```
+
+**6. Handing off a long session.** When Claude suggests it, or a session feels slow, say "hand off". Claude saves where the work stands, and the next session starts from a small brief instead of the whole history.
+
+**Update later** with `/plugin marketplace update memory-os` in Claude Code, and `pip install --upgrade git+https://github.com/josephalwin175-ai/memory-os.git` for the command.
+
+**Turn things off** with the switches in [Switches](#switches), for example `MOS_TRIM=0` or `MOS_DEDUP=0`. Delete the project's `.memory/` folder to remove its memories; nothing is stored anywhere else except small per-session state in `~/.memory-os`.
 
 ## What it does
 
@@ -59,7 +113,7 @@ The brief is ordered from most stable to least stable, so its leading part stays
 
 ### 4. Trust levels
 
-Every memory records who it came from: `user` (saved from the CLI), `agent` (saved through MCP) or `external`. External memories are never placed in the brief as facts; they appear by title only, labelled as data and not instructions.
+Every memory records who it came from: `user` (saved from the CLI), `agent` (saved through MCP) or `external`. External memories (for example imported ones you accepted from an untrusted source) are never placed in the brief as facts. They appear by id only, labelled as data and not instructions, and their text is only returned when the agent asks for them by id.
 
 ### 5. A nudge when a session gets expensive
 
@@ -327,6 +381,18 @@ checks:
 Database is PostgreSQL via pg
 Replaced MongoDB because we need joins.
 ```
+
+## Known limits
+
+Read these before relying on the numbers.
+
+- **Savings are estimates.** `mos meter` reports where tokens went and an estimate of what is reducible. It is not a measured saving, and subscription limits may weigh cached tokens differently from API prices.
+- **Hooks are tested, not proven in live use.** The unit and end-to-end tests drive every hook with realistic input, and the plugin loads in a real Claude Code session. Read dedup, output trimming, guards and the rotation nudge have not been observed firing inside a live model session.
+- **Output trimming depends on Claude Code.** It uses the `updatedToolOutput` hook field. On a Claude Code version without it, trimming does nothing.
+- **Extraction is simple.** The offline pass uses patterns and will propose some noise. That is why its results go to the inbox and never straight into memory.
+- **The benchmark is synthetic** and has no model in the loop.
+- **Python is required.** The plugin's hooks and server run `python`; on some systems that is `python3`.
+- **One account's data.** Per-session state lives in `~/.memory-os`, and nothing is synced between machines except what you commit from `.memory/`.
 
 ## What is not built yet
 
