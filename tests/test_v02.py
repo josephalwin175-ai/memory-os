@@ -49,6 +49,12 @@ class InboxTest(Case):
         self.assertEqual(inbox.box(self.store).all(), [])
         self.assertIn("PostgreSQL", compile_brief(self.store)["text"])
 
+    def test_inbox_is_kept_out_of_git(self):
+        inbox.add(self.store, "Always run the linter before committing")
+        inbox.add(self.store, "We decided to use PostgreSQL instead of MongoDB")
+        ignore = (self.store.dir / ".gitignore").read_text(encoding="utf-8").split()
+        self.assertEqual(ignore.count("inbox/"), 1)
+
     def test_duplicates_and_rejections_are_not_proposed_again(self):
         first = inbox.add(self.store, "Always run the linter before committing")
         self.assertIsNone(inbox.add(self.store, "always run the linter before committing!"))

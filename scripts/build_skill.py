@@ -20,8 +20,8 @@ DIST = ROOT / "dist"
 NAME = "memory-os"
 
 
-def build() -> Path:
-    out_dir = DIST / NAME
+def build(dist: Path = DIST) -> Path:
+    out_dir = dist / NAME
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
@@ -32,10 +32,14 @@ def build() -> Path:
         zipapp.create_archive(stage, out_dir / "mos.pyz", compressed=True)
     shutil.copy(ROOT / "standalone" / "SKILL.md", out_dir / "SKILL.md")
     shutil.copy(ROOT / "LICENSE", out_dir / "LICENSE")
-    archive = DIST / f"{NAME}-skill.zip"
+    archive = dist / f"{NAME}-skill.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in sorted(out_dir.iterdir()):
-            zf.write(file, f"{NAME}/{file.name}")
+            # A fixed timestamp keeps the archive identical when the sources have not changed.
+            info = zipfile.ZipInfo(f"{NAME}/{file.name}", date_time=(2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, file.read_bytes())
     return archive
 
 

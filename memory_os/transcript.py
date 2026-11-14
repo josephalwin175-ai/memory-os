@@ -239,13 +239,5 @@ def capture(payload: dict) -> Memory | None:
                  created=today, verified=today, source=f"transcript:{Path(transcript).stem}")
     store.write(mem)
     # Per-machine state: keep it out of the shared, reviewed memories.
-    ignore = store.dir / ".gitignore"
-    entry = f"{LAST_SESSION_ID}.md"
-    try:
-        current = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
-        if entry not in current.split():
-            ignore.write_text(current + ("" if not current or current.endswith("\n") else "\n") + entry + "\n",
-                              encoding="utf-8", newline="\n")
-    except OSError:
-        pass
+    store.ignore(f"{LAST_SESSION_ID}.md")
     return mem

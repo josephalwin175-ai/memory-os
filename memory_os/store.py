@@ -128,6 +128,18 @@ class Store:
     def exists(self) -> bool:
         return self.dir.is_dir()
 
+    def ignore(self, entry: str) -> None:
+        """Keep `entry` out of git: per-machine or unreviewed state does not belong in shared memories."""
+        path = (self.root / DIR_NAME) / ".gitignore"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            current = path.read_text(encoding="utf-8") if path.exists() else ""
+            if entry not in current.split():
+                path.write_text(current + ("" if not current or current.endswith("\n") else "\n") + entry + "\n",
+                                encoding="utf-8", newline="\n")
+        except OSError:
+            pass
+
     def init(self) -> Path:
         self.dir.mkdir(parents=True, exist_ok=True)
         return self.dir

@@ -218,14 +218,35 @@ class PackagingTest(unittest.TestCase):
     def test_standalone_skill_builds_and_runs(self):
         sys.path.insert(0, str(REPO / "scripts"))
         import build_skill
-        archive = build_skill.build()
-        self.assertTrue(archive.is_file())
-        pyz = REPO / "dist" / "memory-os" / "mos.pyz"
         with tempfile.TemporaryDirectory() as tmp:
+            # Build into a temp folder so running the tests never changes the committed archive.
+            archive = build_skill.build(Path(tmp) / "dist")
+            self.assertTrue(archive.is_file())
+            first = archive.read_bytes()
+            pyz = Path(tmp) / "dist" / "memory-os" / "mos.pyz"
             done = subprocess.run([sys.executable, str(pyz), "bench", "--json"], capture_output=True, text=True,
                                   cwd=tmp, timeout=120)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual(json.loads(done.stdout)["methods"]["compiled"]["wrong"], 0)
+            import zipfile
+            names = sorted(zipfile.ZipFile(archive).namelist())
+            self.assertEqual(names, ["memory-os/LICENSE", "memory-os/SKILL.md", "memory-os/mos.pyz"])
+            self.assertTrue(first)
+
+    def test_committed_skill_archive_matches_the_source(self):
+        """The zip in the repo must contain this version of the code, or friends get stale code."""
+        import zipfile
+        archive = REPO / "dist" / "memory-os-skill.zip"
+        self.assertTrue(archive.is_file(), "run: python scripts/build_skill.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            zipfile.ZipFile(archive).extractall(tmp)
+            with zipfile.ZipFile(Path(tmp) / "memory-os" / "mos.pyz") as pyz:
+                for path in (REPO / "memory_os").glob("*.py"):
+                    self.assertEqual(pyz.read(f"memory_os/{path.name}").replace(b"\r\n", b"\n"),
+                                     path.read_bytes().replace(b"\r\n", b"\n"),
+                                     f"{path.name} differs; run: python scripts/build_skill.py")
+            skill = (Path(tmp) / "memory-os" / "SKILL.md").read_bytes().replace(b"\r\n", b"\n")
+            self.assertEqual(skill, (REPO / "standalone" / "SKILL.md").read_bytes().replace(b"\r\n", b"\n"))
 
 
 if __name__ == "__main__":

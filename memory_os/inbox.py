@@ -54,6 +54,7 @@ def add(store: Store, text: str, type: str = "fact", source: str = "", checks: l
     today = date.today().isoformat()
     mem = Memory(id=mem_id, text=text, type=type, trust="external", created=today, source=source, checks=list(checks or []))
     inbox.write(mem)
+    store.ignore(f"{SUB}/")  # candidates are unreviewed and personal until accepted
     return mem
 
 

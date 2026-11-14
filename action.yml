@@ -35,7 +35,11 @@ runs:
         set -e
         cat "$RUNNER_TEMP/mos-verify.md" >> "$GITHUB_STEP_SUMMARY"
         if [ "$code" -ne 0 ] && [ "$MOS_COMMENT" = "true" ] && [ -n "$MOS_PR" ]; then
-          gh pr comment "$MOS_PR" --body-file "$RUNNER_TEMP/mos-verify.md"
+          # Update the previous comment when there is one, so pushes do not pile up duplicates.
+          # Pull requests from forks get a read-only token; commenting then fails, which is not worth failing the job.
+          gh pr comment "$MOS_PR" --body-file "$RUNNER_TEMP/mos-verify.md" --edit-last --create-if-none 2>/dev/null \
+            || gh pr comment "$MOS_PR" --body-file "$RUNNER_TEMP/mos-verify.md" \
+            || echo "::warning::MEMORY OS could not comment on the pull request; the result is in the job summary."
         fi
         if [ "$code" -ne 0 ] && [ "$MOS_FAIL" = "true" ]; then
           exit 1
