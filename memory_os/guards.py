@@ -1,7 +1,8 @@
-"""Per-tool-call savers: skip re-reads of unchanged files and trim huge command output.
+"""Per-tool-call hooks: skip re-reads of unchanged files, trim huge tool output,
+and surface saved rules when an edit or command matches one.
 
-Both fail open. If anything is missing or unexpected, the hook prints nothing
-and the tool call proceeds exactly as it would without MEMORY OS.
+All of them fail open. If anything is missing or unexpected, the hook prints
+nothing and the tool call proceeds exactly as it would without MEMORY OS.
 """
 
 from __future__ import annotations
@@ -12,6 +13,8 @@ import os
 import re
 from pathlib import Path
 
+from . import checks, ledger
+from .store import Store
 from .transcript import _state_path
 
 MIN_DEDUP_BYTES = 2000      # below this a re-read is cheaper than the refusal round trip
@@ -19,6 +22,9 @@ DEFAULT_TRIM_CHARS = 12_000  # roughly 3K tokens
 HEAD_LINES, TAIL_LINES, SIGNAL_LINES, MAX_LINE = 40, 80, 40, 400
 SIGNAL = re.compile(r"(?i)\b(error|errors|fail|failed|failure|exception|traceback|fatal|panic|warning|denied|"
                     r"not found|cannot|undefined|assert)")
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+# Which string fields hold the bulky text, per tool. MCP tools return a list of text blocks.
+TRIM_FIELDS = {"Bash": ("stdout", "stderr"), "PowerShell": ("stdout", "stderr"), "Grep": ("content",)}
 
 
 def _off(name: str) -> bool:
@@ -92,6 +98,91 @@ def read_guard(payload: dict) -> dict | None:
     return None
 
 
+def _glob_match(rel: str, pattern: str) -> bool:
+    """Path glob where `**` spans folders and `*` stays inside one path segment."""
+    regex, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            regex += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            regex += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            regex += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            regex += "[^/]"
+            i += 1
+        else:
+            regex += re.escape(pattern[i])
+            i += 1
+    return re.fullmatch(regex, rel, re.IGNORECASE if os.name == "nt" else 0) is not None
+
+
+def memory_guard(payload: dict) -> dict | None:
+    """PreToolUse on edits and shell commands: surface a saved rule or lesson when it applies.
+
+    Each guard interrupts once per session, with the memory's text. A retry
+    goes through, so a guard informs the decision and never blocks the work.
+    """
+    tool = payload.get("tool_name")
+    tool_input = payload.get("tool_input") or {}
+    if _off("MOS_GUARDS") or (tool not in EDIT_TOOLS and tool != "Bash"):
+        return None
+    store = Store(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    if not store.exists():
+        return None
+    guarded = [m for m in store.all() if m.guards and m.status == "active"]
+    if not guarded:
+        return None
+    rel = ""
+    if tool in EDIT_TOOLS:
+        raw = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+        try:
+            rel = Path(raw).resolve().relative_to(store.root.resolve()).as_posix()
+        except (ValueError, OSError):
+            return None
+    command = str(tool_input.get("command") or "")
+    path, state = _load(str(payload.get("session_id") or ""))
+    shown = state.setdefault("guards", {})
+    hits = []
+    for mem in guarded:
+        if shown.get(mem.id):
+            continue
+        for spec in mem.guards:
+            try:
+                kind, pattern = checks.parse_guard(spec)
+            except ValueError:
+                continue
+            if kind == "edit" and rel and _glob_match(rel, pattern):
+                hits.append(mem)
+                break
+            if kind == "bash" and tool == "Bash" and re.search(pattern, command):
+                hits.append(mem)
+                break
+    if not hits:
+        return None
+    for mem in hits:
+        shown[mem.id] = True
+    _save(path, state)
+    ledger.record_use(store.root, [m.id for m in hits])
+    notes = " ".join(f"[{m.id}] {' '.join(m.text.split())}" for m in hits)
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            f"MEMORY OS guard, saved for this project: {notes} -- Take this into account. If the action is still "
+            f"right, retry it and it will go through."),
+    }}
+
+
+def pre_tool(payload: dict) -> dict | None:
+    if payload.get("tool_name") == "Read":
+        return read_guard(payload)
+    return memory_guard(payload)
+
+
 def trim_text(text: str, limit: int) -> tuple[str, dict] | None:
     """Keep the head, the tail and any error-looking lines in between. None if not worth it."""
     if len(text) <= limit:
@@ -128,38 +219,59 @@ def _ledger_dir(payload: dict) -> Path:
     return home / "outputs"
 
 
+def _trimmed(text, limit: int, payload: dict, label: str):
+    """Trimmed replacement for one string, or None to leave it alone. Raises OSError if it cannot be saved."""
+    if not isinstance(text, str):
+        return None
+    result = trim_text(text, limit)
+    if not result:
+        return None
+    body, stats = result
+    folder = _ledger_dir(payload)
+    folder.mkdir(parents=True, exist_ok=True)
+    full = folder / f"{hashlib.sha1(text.encode('utf-8', 'replace')).hexdigest()[:12]}-{label}.txt"
+    full.write_text(text, encoding="utf-8", errors="replace")
+    return (f"{body}\n[MEMORY OS: showing {stats['shown']} of {stats['lines']} lines, about "
+            f"{stats['kept_chars'] // 4} of {stats['chars'] // 4} tokens. Full output saved at {full} ; "
+            f"Grep or Read that file if you need the rest.]")
+
+
 def trim_output(payload: dict) -> dict | None:
-    """PostToolUse on Bash: replace very long output with a trimmed view and keep the full text on disk."""
-    if _off("MOS_TRIM") or payload.get("tool_name") != "Bash":
+    """PostToolUse: replace very long tool output with a trimmed view and keep the full text on disk.
+
+    Covers Bash, PowerShell, Grep and MCP tools. The replacement keeps the
+    tool's own output shape and only shortens the text inside it.
+    """
+    tool = str(payload.get("tool_name") or "")
+    if _off("MOS_TRIM") or "memory-os" in tool:
         return None
     response = payload.get("tool_response")
-    if not isinstance(response, dict) or response.get("isImage"):
-        return None
     try:
         limit = int(os.environ.get("MOS_TRIM_CHARS", DEFAULT_TRIM_CHARS))
     except ValueError:
         limit = DEFAULT_TRIM_CHARS
-    updated = dict(response)
-    notes = []
-    for field in ("stdout", "stderr"):
-        text = response.get(field)
-        if not isinstance(text, str):
-            continue
-        result = trim_text(text, limit)
-        if not result:
-            continue
-        body, stats = result
-        folder = _ledger_dir(payload)
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-            full = folder / f"{hashlib.sha1(text.encode('utf-8', 'replace')).hexdigest()[:12]}-{field}.txt"
-            full.write_text(text, encoding="utf-8", errors="replace")
-        except OSError:
-            return None  # never drop output that could not be saved in full
-        updated[field] = (f"{body}\n[MEMORY OS: showing {stats['shown']} of {stats['lines']} lines, about "
-                          f"{stats['kept_chars'] // 4} of {stats['chars'] // 4} tokens. Full output saved at {full} ; "
-                          f"Grep or Read that file if you need the rest.]")
-        notes.append(field)
-    if not notes:
+    changed = False
+    try:
+        if tool in TRIM_FIELDS and isinstance(response, dict) and not response.get("isImage"):
+            updated = dict(response)
+            for field in TRIM_FIELDS[tool]:
+                new = _trimmed(response.get(field), limit, payload, field)
+                if new is not None:
+                    updated[field] = new
+                    changed = True
+        elif tool.startswith("mcp__") and isinstance(response, list):
+            updated = []
+            for block in response:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    new = _trimmed(block.get("text"), limit, payload, "mcp")
+                    if new is not None:
+                        block = {**block, "text": new}
+                        changed = True
+                updated.append(block)
+        else:
+            return None
+    except OSError:
+        return None  # never drop output that could not be saved in full
+    if not changed:
         return None
     return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": updated}}

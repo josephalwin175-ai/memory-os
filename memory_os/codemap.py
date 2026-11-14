@@ -172,7 +172,15 @@ def build(root: Path, query: str = "", path: str = "", budget: int = DEFAULT_BUD
             entries.append((-score, rel, lines, hits if hits else symbols[:12]))
         else:
             entries.append((0, rel, lines, symbols))
+    concepts = []
+    if terms:
+        from .graph import graphify_matches
+        concepts = graphify_matches(root, terms)
+    extra = ("\n\nFrom the Graphify graph (run code_map with `around` on a file for its links):\n  "
+             + "\n  ".join(concepts)) if concepts else ""
     if not entries:
+        if concepts:
+            return "No matching source symbols." + extra
         return "No matching source files or symbols." if (terms or wanted) else "No source files found."
     entries.sort(key=lambda e: (e[0], e[1]))
 
@@ -184,6 +192,18 @@ def build(root: Path, query: str = "", path: str = "", budget: int = DEFAULT_BUD
     for _, rel, lines, symbols in entries:
         text = block(rel, lines, symbols)
         cost = estimate_tokens(text) + 1
+        room = budget - used
+        if cost > room and room >= 120 and len(symbols) > 12:
+            # A big file should still be outlined in part, not dropped from the outline.
+            kept, size = [], estimate_tokens(rel) + 12
+            for symbol in symbols:
+                size += estimate_tokens(symbol[2]) + 3
+                if size > room:
+                    break
+                kept.append(symbol)
+            if len(kept) >= 8:
+                text = block(rel, lines, kept) + f"\n  ...and {len(symbols) - len(kept)} more symbols; narrow with a query"
+                cost = estimate_tokens(text) + 1
         if used + cost > budget:
             continue
         out.append(text)
@@ -204,4 +224,4 @@ def build(root: Path, query: str = "", path: str = "", budget: int = DEFAULT_BUD
         out.append("Not outlined (narrow with a query or path to see their symbols):\n  " + "\n  ".join(listing)
                    + (f"\n  ...and {hidden} more files" if hidden else ""))
     header = f"Code map: {shown} of {len(entries)} files outlined. Numbers are line numbers; Read with offset and limit."
-    return header + "\n\n" + "\n".join(out)
+    return header + "\n\n" + "\n".join(out) + extra

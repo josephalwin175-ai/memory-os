@@ -1,6 +1,6 @@
 {
   "name": "memory-os",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Project memory that is checked against your repo, plus a profiler that shows where your Claude Code tokens go.",
   "author": {
     "name": "Alwin"

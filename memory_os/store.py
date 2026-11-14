@@ -20,6 +20,9 @@ STATUSES = ("active", "stale", "superseded", "archived")
 TRUSTS = ("user", "agent", "external")
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 DIR_NAME = ".memory"
+STOPWORDS = frozenset("""a an and are as at be but by can do does for from has have how i in is it its of on or
+that the their then there these this to was we were what when where which who why will with you your fix add make
+use using please need want should would could problem issue""".split())
 
 
 @dataclass
@@ -35,6 +38,7 @@ class Memory:
     supersedes: str = ""
     source: str = ""
     checks: list[str] = field(default_factory=list)
+    guards: list[str] = field(default_factory=list)
 
     @property
     def title(self) -> str:
@@ -55,6 +59,9 @@ class Memory:
         if self.checks:
             lines.append("checks:")
             lines += [f"  - {c}" for c in self.checks]
+        if self.guards:
+            lines.append("guards:")
+            lines += [f"  - {g}" for g in self.guards]
         lines += ["---", self.text.strip(), ""]
         return "\n".join(lines)
 
@@ -68,19 +75,19 @@ def parse(raw: str) -> Memory | None:
     except StopIteration:
         return None
     meta: dict[str, str] = {}
-    check_list: list[str] = []
-    in_checks = False
+    lists: dict[str, list[str]] = {"checks": [], "guards": []}
+    current = None
     for line in lines[1:end]:
-        if in_checks and line.lstrip().startswith("- "):
-            check_list.append(line.lstrip()[2:].strip())
+        if current and line.lstrip().startswith("- "):
+            lists[current].append(line.lstrip()[2:].strip())
             continue
-        in_checks = False
+        current = None
         key, sep, value = line.partition(":")
         if not sep:
             continue
         key, value = key.strip(), value.strip()
-        if key == "checks":
-            in_checks = True
+        if key in lists and not value:
+            current = key
         else:
             meta[key] = value
     if not ID_RE.match(meta.get("id", "")):
@@ -92,7 +99,8 @@ def parse(raw: str) -> Memory | None:
         trust=meta.get("trust") if meta.get("trust") in TRUSTS else "external",
         pin=meta.get("pin", "").lower() == "true",
         created=meta.get("created", ""), verified=meta.get("verified", ""),
-        supersedes=meta.get("supersedes", ""), source=meta.get("source", ""), checks=check_list,
+        supersedes=meta.get("supersedes", ""), source=meta.get("source", ""),
+        checks=lists["checks"], guards=lists["guards"],
     )
 
 
@@ -113,9 +121,9 @@ def slugify(text: str) -> str:
 
 
 class Store:
-    def __init__(self, root: Path | str | None = None):
+    def __init__(self, root: Path | str | None = None, sub: str = ""):
         self.root = find_root(root)
-        self.dir = self.root / DIR_NAME
+        self.dir = self.root / DIR_NAME / sub if sub else self.root / DIR_NAME
 
     def exists(self) -> bool:
         return self.dir.is_dir()
@@ -150,7 +158,8 @@ class Store:
         (self.dir / f"{mem.id}.md").write_text(mem.dump(), encoding="utf-8", newline="\n")
 
     def save(self, text: str, type: str = "fact", mem_id: str = "", checks: list[str] | None = None,
-             supersedes: str = "", pin: bool = False, trust: str = "agent", source: str = "") -> Memory:
+             supersedes: str = "", pin: bool = False, trust: str = "agent", source: str = "",
+             guards: list[str] | None = None) -> Memory:
         text = (text or "").strip()
         if not text:
             raise ValueError("memory text is empty")
@@ -160,6 +169,8 @@ class Store:
             raise ValueError(f"trust must be one of {', '.join(TRUSTS)}")
         for spec in checks or []:
             checks_mod.parse(spec)
+        for spec in guards or []:
+            checks_mod.parse_guard(spec)
         today = date.today().isoformat()
         if mem_id:
             if not ID_RE.match(mem_id):
@@ -172,7 +183,8 @@ class Store:
         previous = self.get(mem_id)
         mem = Memory(id=mem_id, text=text, type=type, trust=trust, pin=pin,
                      created=previous.created if previous else today, verified=today,
-                     supersedes=supersedes, source=source, checks=list(checks or []))
+                     supersedes=supersedes, source=source, checks=list(checks or []),
+                     guards=list(guards if guards is not None else (previous.guards if previous else [])))
         if supersedes:
             old = self.get(supersedes)
             if old is None:
@@ -196,7 +208,9 @@ class Store:
 
     def search(self, query: str, limit: int = 8, include_inactive: bool = False) -> list[Memory]:
         pool = [m for m in self.all() if include_inactive or m.status == "active"]
-        terms = re.findall(r"[A-Za-z0-9_]+", query or "")
+        words = re.findall(r"[A-Za-z0-9_]+", query or "")
+        # Common words match nearly every memory and bury the ones that matter.
+        terms = [w for w in words if w.lower() not in STOPWORDS] or words
         if not pool or not terms:
             return pool[:limit]
         by_id = {m.id: m for m in pool}

@@ -1,0 +1,42 @@
+name: MEMORY OS verify
+description: Comment on a pull request when it makes a saved project memory false.
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  comment:
+    description: Post a pull-request comment when a memory no longer holds.
+    default: "true"
+  fail:
+    description: Fail the job when a memory no longer holds.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        MOS_COMMENT: ${{ inputs.comment }}
+        MOS_FAIL: ${{ inputs.fail }}
+        MOS_PR: ${{ github.event.pull_request.number }}
+      run: |
+        if [ ! -d .memory ]; then
+          echo "No .memory folder in this repository; nothing to verify."
+          exit 0
+        fi
+        set +e
+        python "$GITHUB_ACTION_PATH/bin/mos.py" verify --markdown > "$RUNNER_TEMP/mos-verify.md"
+        code=$?
+        set -e
+        cat "$RUNNER_TEMP/mos-verify.md" >> "$GITHUB_STEP_SUMMARY"
+        if [ "$code" -ne 0 ] && [ "$MOS_COMMENT" = "true" ] && [ -n "$MOS_PR" ]; then
+          gh pr comment "$MOS_PR" --body-file "$RUNNER_TEMP/mos-verify.md"
+        fi
+        if [ "$code" -ne 0 ] && [ "$MOS_FAIL" = "true" ]; then
+          exit 1
+        fi

@@ -41,6 +41,23 @@ def parse(spec: str) -> tuple[str, list[str]]:
     return kind, args
 
 
+GUARD_KINDS = ("edit", "bash")
+
+
+def parse_guard(spec: str) -> tuple[str, str]:
+    """A guard is `edit: <path glob>` or `bash: <regex>`; it fires before a matching tool call."""
+    kind, sep, pattern = spec.partition(":")
+    kind, pattern = kind.strip(), pattern.strip()
+    if not sep or kind not in GUARD_KINDS or not pattern or len(pattern) > MAX_PATTERN:
+        raise CheckError(f"guard must be 'edit: <path glob>' or 'bash: <regex>', got {spec!r}")
+    if kind == "bash":
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise CheckError(f"bad regex in guard: {exc}") from None
+    return kind, pattern
+
+
 def _resolve(root: Path, rel: str) -> Path:
     root = root.resolve()
     target = (root / rel).resolve()

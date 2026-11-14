@@ -1,5 +1,5 @@
 {
-  "description": "MEMORY OS: session brief, rotation nudge, session capture, read dedup and output trimming",
+  "description": "MEMORY OS: session brief, rotation nudge, session capture, read dedup, memory guards and output trimming",
   "hooks": {
     "SessionStart": [
       {
@@ -47,7 +47,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Read",
+        "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
             "type": "command",
@@ -59,7 +59,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
